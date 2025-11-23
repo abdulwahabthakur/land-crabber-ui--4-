@@ -1,0 +1,194 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { LandingScreen } from "@/components/landing-screen"
+import { RoomScreen } from "@/components/room-screen"
+import { SetupScreen } from "@/components/setup-screen"
+import { RaceScreen } from "@/components/race-screen"
+import { ResultsScreen } from "@/components/results-screen"
+import { AVAILABLE_COLORS, AVAILABLE_AVATARS } from "@/lib/auth"
+
+export type Runner = {
+  id: string
+  name: string
+  color: string
+  avatar: string
+  distance: number
+  speed: number
+  time: number
+  location?: { lat: number; lng: number }
+  pathHistory?: { lat: number; lng: number }[]
+}
+
+export type RaceData = {
+  runners: Runner[]
+  startTime: number
+  isActive: boolean
+}
+
+export type Player = {
+  id: string
+  ip: string
+  name: string
+  color: string
+  avatar: string
+}
+
+export default function Page() {
+  const [player, setPlayer] = useState<Player | null>(null)
+  const [screen, setScreen] = useState<"landing" | "room" | "setup" | "race" | "results">("landing")
+  const [runners, setRunners] = useState<Runner[]>([])
+  const [raceData, setRaceData] = useState<RaceData | null>(null)
+  const [currentRoomId, setCurrentRoomId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Get player info based on IP on mount
+  useEffect(() => {
+    const getPlayerInfo = async () => {
+      try {
+        const response = await fetch('/api/ip')
+        if (!response.ok) {
+          throw new Error('Failed to fetch IP')
+        }
+        const data = await response.json()
+        
+        if (data.success) {
+          // Create a player object with default values
+          const ipParts = data.ip.split('.')
+          const defaultPlayer: Player = {
+            id: data.playerId,
+            ip: data.ip,
+            name: `Player ${ipParts[ipParts.length - 1] || '1'}`,
+            color: AVAILABLE_COLORS[0].value,
+            avatar: AVAILABLE_AVATARS[0],
+          }
+          
+          // Try to load from localStorage if exists
+          if (typeof window !== 'undefined') {
+            const savedPlayer = localStorage.getItem('land-crabber-player')
+            if (savedPlayer) {
+              try {
+                const parsed = JSON.parse(savedPlayer)
+                setPlayer({ ...defaultPlayer, ...parsed, id: data.playerId, ip: data.ip })
+              } catch {
+                setPlayer(defaultPlayer)
+              }
+            } else {
+              setPlayer(defaultPlayer)
+            }
+          } else {
+            setPlayer(defaultPlayer)
+          }
+        } else {
+          throw new Error('API returned unsuccessful response')
+        }
+      } catch (err) {
+        console.error('Error getting player info:', err)
+        // Fallback player - always set something so page doesn't stay loading
+        setPlayer({
+          id: `player-${Date.now()}`,
+          ip: 'unknown',
+          name: 'Player 1',
+          color: AVAILABLE_COLORS[0].value,
+          avatar: AVAILABLE_AVATARS[0],
+        })
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    getPlayerInfo()
+  }, [])
+
+  // Save player to localStorage when it changes
+  useEffect(() => {
+    if (player && typeof window !== 'undefined') {
+      localStorage.setItem('land-crabber-player', JSON.stringify({
+        name: player.name,
+        color: player.color,
+        avatar: player.avatar,
+      }))
+    }
+  }, [player])
+
+  // Show loading state
+  if (isLoading || !player) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <div className="text-6xl animate-spin">🦀</div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const handleStartRace = () => {
+    setScreen("room")
+  }
+
+  const handleJoinRoom = (roomId: string) => {
+    setCurrentRoomId(roomId)
+    setScreen("setup")
+  }
+
+  const handleCreateRoom = (roomId: string) => {
+    setCurrentRoomId(roomId)
+    setScreen("setup")
+  }
+
+  const handleBeginRace = (
+    setupRunners: Omit<Runner, "distance" | "speed" | "time" | "location" | "pathHistory">[],
+  ) => {
+    const initialRunners = setupRunners.map((r) => ({
+      ...r,
+      distance: 0,
+      speed: 0,
+      time: 0,
+      location: undefined,
+      pathHistory: [],
+    }))
+    setRunners(initialRunners)
+    setRaceData({
+      runners: initialRunners,
+      startTime: Date.now(),
+      isActive: true,
+    })
+    setScreen("race")
+  }
+
+  const handleEndRace = (finalRunners: Runner[]) => {
+    setRunners(finalRunners)
+    setScreen("results")
+  }
+
+  const handleRestart = () => {
+    setRunners([])
+    setRaceData(null)
+    setScreen("landing")
+  }
+
+  const updatePlayer = (updates: Partial<Player>) => {
+    setPlayer((prev) => prev ? { ...prev, ...updates } : null)
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      {screen === "landing" && (
+        <LandingScreen onStart={handleStartRace} player={player} onUpdatePlayer={updatePlayer} />
+      )}
+      {screen === "room" && player && (
+        <RoomScreen
+          player={player}
+          onJoinRoom={handleJoinRoom}
+          onCreateRoom={handleCreateRoom}
+          onBack={() => setScreen("landing")}
+        />
+      )}
+      {screen === "setup" && <SetupScreen onBegin={handleBeginRace} player={player} roomId={currentRoomId} />}
+      {screen === "race" && raceData && (
+        <RaceScreen initialRunners={runners} startTime={raceData.startTime} onEndRace={handleEndRace} playerId={player?.id} roomId={currentRoomId} />
+      )}
+      {screen === "results" && <ResultsScreen runners={runners} onRestart={handleRestart} player={player} />}
+    </div>
+  )
+}
