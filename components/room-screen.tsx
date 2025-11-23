@@ -27,6 +27,9 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
   const [rooms, setRooms] = useState<Room[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
+  const [roomCode, setRoomCode] = useState("")
+  const [isJoiningByCode, setIsJoiningByCode] = useState(false)
+  const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null)
 
   useEffect(() => {
     // Get GPS location
@@ -88,6 +91,7 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
       })
       const data = await response.json()
       if (data.success) {
+        setCreatedRoomCode(data.room.code)
         onCreateRoom(data.room.id)
       }
     } catch (error) {
@@ -95,6 +99,54 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
       alert('Failed to create room')
     } finally {
       setIsCreating(false)
+    }
+  }
+
+  const handleJoinByCode = async () => {
+    if (!roomCode || roomCode.length !== 6) {
+      alert('Please enter a valid 6-character room code')
+      return
+    }
+    
+    if (!location) {
+      alert('Please allow GPS access first')
+      return
+    }
+    
+    setIsJoiningByCode(true)
+    try {
+      const response = await fetch(`/api/rooms/code/${roomCode.toUpperCase()}`)
+      const data = await response.json()
+      
+      if (data.success && data.room) {
+        // Join the room
+        const joinResponse = await fetch(`/api/rooms/${data.room.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'join',
+            playerId: player.id,
+            playerName: player.name,
+            playerColor: player.color,
+            playerAvatar: player.avatar,
+            lat: location.lat,
+            lng: location.lng,
+          }),
+        })
+        const joinData = await joinResponse.json()
+        if (joinData.success) {
+          onJoinRoom(data.room.id)
+        } else {
+          alert(joinData.error || 'Failed to join room')
+        }
+      } else {
+        alert('Room not found. Please check the code.')
+      }
+    } catch (error) {
+      console.error('Error joining by code:', error)
+      alert('Failed to join room')
+    } finally {
+      setIsJoiningByCode(false)
     }
   }
 
@@ -189,6 +241,39 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
           </div>
         )}
 
+        {/* Join by Code */}
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+        >
+          <Card className="p-6">
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-center">Join by Room Code</h2>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={roomCode}
+                  onChange={(e) => setRoomCode(e.target.value.toUpperCase().slice(0, 6))}
+                  placeholder="Enter 6-digit code"
+                  className="flex-1 px-4 py-2 border-2 rounded-lg text-center text-2xl font-bold tracking-widest uppercase"
+                  maxLength={6}
+                />
+                <Button
+                  onClick={handleJoinByCode}
+                  disabled={isJoiningByCode || !roomCode || roomCode.length !== 6}
+                  size="lg"
+                >
+                  {isJoiningByCode ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Join"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </motion.div>
+
         {/* Create Room */}
         <motion.div
           initial={{ y: 20, opacity: 0 }}
@@ -199,8 +284,15 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
             <div className="text-center space-y-4">
               <h2 className="text-2xl font-bold">Start New Race</h2>
               <p className="text-muted-foreground">
-                Create a new race room. Other players nearby can join you!
+                Create a new race room. Share the code with friends!
               </p>
+              {createdRoomCode && (
+                <div className="p-4 bg-primary/10 rounded-lg border-2 border-primary">
+                  <p className="text-sm text-muted-foreground mb-2">Room Code:</p>
+                  <p className="text-4xl font-black text-primary tracking-widest">{createdRoomCode}</p>
+                  <p className="text-xs text-muted-foreground mt-2">Share this code with other players</p>
+                </div>
+              )}
               <Button
                 onClick={handleCreateRoom}
                 disabled={isCreating || !location}

@@ -1,6 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRooms, getRoom, setRoom } from '@/lib/rooms'
 
+// Generate a simple 6-character room code
+function generateRoomCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Removed confusing chars
+  let code = ''
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return code
+}
+
+function assignRoomCode(roomId: string): string {
+  const room = getRoom(roomId)
+  if (!room) return ''
+  
+  if (!room.code) {
+    const rooms = getRooms()
+    let code: string
+    let attempts = 0
+    
+    // Ensure unique code
+    do {
+      code = generateRoomCode()
+      attempts++
+    } while (
+      Array.from(rooms.values()).some((r: any) => r.code === code) &&
+      attempts < 100
+    )
+    
+    room.code = code
+    setRoom(roomId, room)
+  }
+  
+  return room.code
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -60,11 +95,15 @@ export async function POST(request: NextRequest) {
     })
 
     setRoom(roomId, room)
+    
+    // Generate room code
+    const code = assignRoomCode(roomId)
 
     return NextResponse.json({
       success: true,
       room: {
         id: room.id,
+        code: code,
         players: room.players,
         isActive: room.isActive,
       },

@@ -11,11 +11,12 @@ import type { Player } from "@/app/page"
 
 type LandingScreenProps = {
   onStart: () => void
+  onJoinRoom?: () => void
   player: Player
   onUpdatePlayer: (updates: Partial<Player>) => void
 }
 
-export function LandingScreen({ onStart, player, onUpdatePlayer }: LandingScreenProps) {
+export function LandingScreen({ onStart, onJoinRoom, player, onUpdatePlayer }: LandingScreenProps) {
   const [showSettings, setShowSettings] = useState(false)
 
   return (
@@ -122,15 +123,30 @@ export function LandingScreen({ onStart, player, onUpdatePlayer }: LandingScreen
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.5 }}
-          className="pt-8"
+          className="pt-8 space-y-4"
         >
-          <Button
-            onClick={onStart}
-            size="lg"
-            className="text-2xl font-black px-12 py-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all duration-300 pulse-glow"
-          >
-            Start Race
-          </Button>
+          <div className="space-y-3">
+            <Button
+              onClick={onStart}
+              size="lg"
+              className="text-2xl font-black px-12 py-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all duration-300 pulse-glow w-full"
+            >
+              Start Race (Local)
+            </Button>
+            {onJoinRoom && (
+              <Button
+                onClick={onJoinRoom}
+                size="lg"
+                variant="outline"
+                className="text-xl font-black px-12 py-6 rounded-2xl border-2 w-full"
+              >
+                Join/Create Room (Multiplayer)
+              </Button>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground text-center">
+            Play locally or join other players via room code
+          </p>
         </motion.div>
 
         {/* Fun Stats */}

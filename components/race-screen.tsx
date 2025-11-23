@@ -86,6 +86,11 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
               const newDistance = runner.distance + distAdded
               const currentSpeed = speed !== null ? speed * 3.6 : distAdded > 0 ? distAdded / (1 / 3600) : 0
 
+              // Calculate points: 1 point per 100m, bonus for speed
+              const pointsGained = Math.floor(distAdded * 10) // 1 point per 100m
+              const speedBonus = currentSpeed > 10 ? Math.floor(currentSpeed / 10) : 0 // Bonus for speed
+              const newPoints = (runner.points || 0) + pointsGained + speedBonus
+
               // Update room if in a room
               if (roomId) {
                 fetch(`/api/rooms/${roomId}`, {
@@ -98,6 +103,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
                     lng: longitude,
                     distance: newDistance,
                     speed: currentSpeed,
+                    points: newPoints,
                   }),
                 }).catch(console.error)
               }
@@ -106,6 +112,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
                 ...runner,
                 distance: newDistance,
                 speed: currentSpeed || 0,
+                points: newPoints,
                 location: newLocation,
                 pathHistory: [...(runner.pathHistory || []), newLocation],
               }
@@ -139,6 +146,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
                   ...runner,
                   distance: roomPlayer.distance || runner.distance,
                   speed: roomPlayer.speed || runner.speed,
+                  points: roomPlayer.points || runner.points || 0,
                   location: roomPlayer.lat && roomPlayer.lng 
                     ? { lat: roomPlayer.lat, lng: roomPlayer.lng }
                     : runner.location,
@@ -185,7 +193,13 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
-  const sortedRunners = [...runners].sort((a, b) => b.distance - a.distance)
+  // Sort by distance first, then by points
+  const sortedRunners = [...runners].sort((a, b) => {
+    if (Math.abs(b.distance - a.distance) > 0.01) {
+      return b.distance - a.distance
+    }
+    return b.points - a.points
+  })
   const leader = sortedRunners[0]
 
   const handleEndRace = () => {
@@ -210,6 +224,10 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
             <div className="text-center">
               <div className="text-2xl font-bold text-foreground">{leader.speed.toFixed(1)}</div>
               <div>km/h (top speed)</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-foreground">{leader.points}</div>
+              <div>points</div>
             </div>
           </div>
         </motion.div>
@@ -262,7 +280,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
                         <div className="font-bold text-lg text-foreground">{runner.name}</div>
                         <div className="text-sm text-muted-foreground flex items-center gap-2">
                           <Zap className="w-3 h-3" />
-                          {runner.speed.toFixed(1)} km/h
+                          {runner.speed.toFixed(1)} km/h • {runner.points || 0} pts
                         </div>
                       </div>
                     </div>

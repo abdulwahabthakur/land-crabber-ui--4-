@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { motion, AnimatePresence } from "framer-motion"
-import { Zap, Clock, Gauge } from "lucide-react"
+import { Zap, Clock, Gauge, Trophy } from "lucide-react"
 import type { Runner, Player } from "@/app/page"
 
 type ResultsScreenProps = {
@@ -155,7 +155,7 @@ export function ResultsScreen({ runners, onRestart, player }: ResultsScreenProps
                     </div>
 
                     {/* Stats Grid */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-4 gap-4">
                       <div className="text-center space-y-1">
                         <div className="flex items-center justify-center text-primary">
                           <Gauge className="w-5 h-5" />
@@ -176,6 +176,13 @@ export function ResultsScreen({ runners, onRestart, player }: ResultsScreenProps
                         </div>
                         <div className="text-2xl font-black text-foreground">{formatTime(runner.time)}</div>
                         <div className="text-xs text-muted-foreground font-medium">time</div>
+                      </div>
+                      <div className="text-center space-y-1">
+                        <div className="flex items-center justify-center text-primary">
+                          <Trophy className="w-5 h-5" />
+                        </div>
+                        <div className="text-2xl font-black text-foreground">{runner.points || 0}</div>
+                        <div className="text-xs text-muted-foreground font-medium">points</div>
                       </div>
                     </div>
                   </div>

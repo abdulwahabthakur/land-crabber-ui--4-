@@ -16,6 +16,7 @@ export type Runner = {
   distance: number
   speed: number
   time: number
+  points: number
   location?: { lat: number; lng: number }
   pathHistory?: { lat: number; lng: number }[]
 }
@@ -123,6 +124,11 @@ export default function Page() {
   }
 
   const handleStartRace = () => {
+    // Direct setup for local play
+    setScreen("setup")
+  }
+
+  const handleJoinRoomScreen = () => {
     setScreen("room")
   }
 
@@ -137,13 +143,14 @@ export default function Page() {
   }
 
   const handleBeginRace = (
-    setupRunners: Omit<Runner, "distance" | "speed" | "time" | "location" | "pathHistory">[],
+    setupRunners: Omit<Runner, "distance" | "speed" | "time" | "points" | "location" | "pathHistory">[],
   ) => {
     const initialRunners = setupRunners.map((r) => ({
       ...r,
       distance: 0,
       speed: 0,
       time: 0,
+      points: 0,
       location: undefined,
       pathHistory: [],
     }))
@@ -174,7 +181,7 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-background">
       {screen === "landing" && (
-        <LandingScreen onStart={handleStartRace} player={player} onUpdatePlayer={updatePlayer} />
+        <LandingScreen onStart={handleStartRace} onJoinRoom={handleJoinRoomScreen} player={player} onUpdatePlayer={updatePlayer} />
       )}
       {screen === "room" && player && (
         <RoomScreen

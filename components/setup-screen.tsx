@@ -27,23 +27,34 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
     { id: player.id, name: player.name, color: player.color, avatar: player.avatar },
   ])
   const [isLoadingRoom, setIsLoadingRoom] = useState(!!roomId)
+  const [roomCode, setRoomCode] = useState<string | null>(null)
 
   // Load players from room if roomId exists
   useEffect(() => {
-    if (!roomId) return
+    if (!roomId) {
+      setIsLoadingRoom(false)
+      return
+    }
 
     const loadRoom = async () => {
       try {
         const response = await fetch(`/api/rooms/${roomId}`)
         const data = await response.json()
-        if (data.success && data.room.players) {
-          const roomRunners = data.room.players.map((p: any) => ({
-            id: p.id,
-            name: p.name,
-            color: p.color,
-            avatar: p.avatar,
-          }))
-          setRunners(roomRunners)
+        if (data.success && data.room) {
+          // Get room code if available
+          if (data.room.code) {
+            setRoomCode(data.room.code)
+          }
+          
+          if (data.room.players) {
+            const roomRunners = data.room.players.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              color: p.color,
+              avatar: p.avatar,
+            }))
+            setRunners(roomRunners)
+          }
         }
       } catch (error) {
         console.error('Error loading room:', error)
@@ -93,7 +104,16 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
   const canStart = runners.every((r) => r.name.trim() !== "")
 
   const handleBegin = async () => {
-    if (!canStart) return
+    if (!canStart) {
+      alert('Please fill in all player names')
+      return
+    }
+    
+    // Check minimum players
+    if (runners.length < 2) {
+      alert('Need at least 2 players to start a race')
+      return
+    }
     
     // If in a room, start the race for everyone
     if (roomId) {
@@ -104,7 +124,7 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
           body: JSON.stringify({ action: 'start' }),
         })
         const data = await response.json()
-        if (data.success) {
+        if (data.success && data.room.players.length >= 2) {
           // Convert room players to runners
           const roomRunners = data.room.players.map((p: any) => ({
             id: p.id,
@@ -113,6 +133,8 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
             avatar: p.avatar,
           }))
           onBegin(roomRunners)
+        } else {
+          alert('Need at least 2 players in the room to start')
         }
       } catch (error) {
         console.error('Error starting race:', error)
@@ -120,12 +142,8 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
         onBegin(runners)
       }
     } else {
-      // Local race without room
-      if (runners.length >= 2) {
-        onBegin(runners)
-      } else {
-        alert('Need at least 2 players to start')
-      }
+      // Local race without room - just start with current runners
+      onBegin(runners)
     }
   }
 
@@ -153,7 +171,14 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
           <p className="text-lg text-muted-foreground">
             {roomId ? "Waiting for players to join..." : "Add 2-6 speed demons 🏃‍♂️💨"}
           </p>
-          {roomId && (
+          {roomId && roomCode && (
+            <div className="p-3 bg-primary/10 rounded-lg border-2 border-primary">
+              <p className="text-sm text-muted-foreground mb-1">Room Code:</p>
+              <p className="text-3xl font-black text-primary tracking-widest">{roomCode}</p>
+              <p className="text-xs text-muted-foreground mt-1">Share this code with other players</p>
+            </div>
+          )}
+          {roomId && !roomCode && (
             <p className="text-sm text-muted-foreground">
               Players will join automatically based on GPS location
             </p>

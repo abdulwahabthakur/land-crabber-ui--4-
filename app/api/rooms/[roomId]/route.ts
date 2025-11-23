@@ -41,7 +41,7 @@ export async function POST(
   try {
     const roomId = params.roomId
     const body = await request.json()
-    const { action, playerId, lat, lng, distance, speed } = body
+    const { action, playerId, lat, lng, distance, speed, points } = body
 
     const room = getRoom(roomId)
     if (!room) {
@@ -73,6 +73,7 @@ export async function POST(
           distance: 0,
           speed: 0,
           time: 0,
+          points: 0,
           joinedAt: Date.now(),
         })
       }
@@ -92,6 +93,7 @@ export async function POST(
         if (lng !== undefined) player.lng = lng
         if (distance !== undefined) player.distance = distance
         if (speed !== undefined) player.speed = speed
+        if (points !== undefined) player.points = points
         player.lastUpdate = Date.now()
       }
     }
