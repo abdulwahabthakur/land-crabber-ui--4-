@@ -9,6 +9,7 @@ import type { Player } from "@/app/page"
 
 type Room = {
   id: string
+  code?: string | null
   playerCount: number
   distance: string
   lat: number
@@ -30,6 +31,7 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
   const [roomCode, setRoomCode] = useState("")
   const [isJoiningByCode, setIsJoiningByCode] = useState(false)
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null)
+  const [createdRoomId, setCreatedRoomId] = useState<string | null>(null)
 
   useEffect(() => {
     // Get GPS location
@@ -59,7 +61,7 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
       const response = await fetch('/api/rooms/find', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat, lng, radius: 0.1 }), // 100m radius
+        body: JSON.stringify({ lat, lng, radius: 1.0 }), // 1km radius for better discovery
       })
       const data = await response.json()
       if (data.success) {
@@ -90,9 +92,22 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
         }),
       })
       const data = await response.json()
-      if (data.success) {
-        setCreatedRoomCode(data.room.code)
-        onCreateRoom(data.room.id)
+      if (data.success && data.room) {
+        // Set the room code and ID to display it
+        setCreatedRoomCode(data.room.code || null)
+        setCreatedRoomId(data.room.id)
+        // Refresh nearby rooms to include the newly created room
+        if (location) {
+          findRooms(location.lat, location.lng)
+        }
+        // Automatically navigate to setup after a short delay to show the code
+        setTimeout(() => {
+          if (data.room.id) {
+            onCreateRoom(data.room.id)
+          }
+        }, 3000) // Show code for 3 seconds then navigate
+      } else {
+        alert(data.error || 'Failed to create room')
       }
     } catch (error) {
       console.error('Error creating room:', error)
@@ -115,11 +130,33 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
     
     setIsJoiningByCode(true)
     try {
-      const response = await fetch(`/api/rooms/code/${roomCode.toUpperCase()}`)
-      const data = await response.json()
+      // First, find the room by code - encode the code for URL safety
+      const normalizedCode = roomCode.toUpperCase().trim()
+      const encodedCode = encodeURIComponent(normalizedCode)
+      console.log('Attempting to join room with code:', normalizedCode)
       
-      if (data.success && data.room) {
-        // Join the room
+      const response = await fetch(`/api/rooms/code/${encodedCode}`)
+      
+      let data
+      try {
+        data = await response.json()
+      } catch (jsonError) {
+        console.error('Failed to parse JSON response:', jsonError)
+        throw new Error(`Server error: ${response.status} ${response.statusText}`)
+      }
+      
+      console.log('Room lookup response:', data)
+      
+      if (!response.ok || !data.success) {
+        const errorMsg = data.error || `HTTP ${response.status}: ${response.statusText}`
+        console.error('Room lookup failed:', errorMsg)
+        alert(errorMsg)
+        return
+      }
+      
+      if (data.success && data.room && data.room.id) {
+        console.log('Found room, attempting to join:', data.room.id)
+        // Join the room using the room ID from the code lookup
         const joinResponse = await fetch(`/api/rooms/${data.room.id}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -133,18 +170,36 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
             lng: location.lng,
           }),
         })
-        const joinData = await joinResponse.json()
+        
+        let joinData
+        try {
+          joinData = await joinResponse.json()
+        } catch (jsonError) {
+          console.error('Failed to parse join response JSON:', jsonError)
+          alert(`Failed to join room: ${joinResponse.status} ${joinResponse.statusText}`)
+          return
+        }
+        
+        console.log('Join response:', joinData)
+        
         if (joinData.success) {
+          // Successfully joined the room
+          console.log('Successfully joined room:', data.room.id)
           onJoinRoom(data.room.id)
         } else {
-          alert(joinData.error || 'Failed to join room')
+          const errorMsg = joinData.error || 'Failed to join room'
+          console.error('Join failed:', errorMsg)
+          alert(errorMsg)
         }
       } else {
-        alert('Room not found. Please check the code.')
+        const errorMsg = data.error || 'Room not found. Please check the code.'
+        console.error('Invalid room data:', data)
+        alert(errorMsg)
       }
     } catch (error) {
       console.error('Error joining by code:', error)
-      alert('Failed to join room')
+      const errorMessage = error instanceof Error ? error.message : 'Failed to join room'
+      alert(`Error: ${errorMessage}`)
     } finally {
       setIsJoiningByCode(false)
     }
@@ -227,8 +282,15 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
                       <div>
                         <div className="font-bold">{room.playerCount} / 6 players</div>
                         <div className="text-sm text-muted-foreground">
-                          {room.distance} km away
+                          {parseFloat(room.distance) < 1 
+                            ? `${(parseFloat(room.distance) * 1000).toFixed(0)} m away`
+                            : `${parseFloat(room.distance).toFixed(2)} km away`}
                         </div>
+                        {room.code && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Code: <span className="font-mono font-bold">{room.code}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <Button onClick={() => handleJoinRoom(room.id)}>
@@ -286,28 +348,57 @@ export function RoomScreen({ player, onJoinRoom, onCreateRoom, onBack }: RoomScr
               <p className="text-muted-foreground">
                 Create a new race room. Share the code with friends!
               </p>
-              {createdRoomCode && (
-                <div className="p-4 bg-primary/10 rounded-lg border-2 border-primary">
-                  <p className="text-sm text-muted-foreground mb-2">Room Code:</p>
-                  <p className="text-4xl font-black text-primary tracking-widest">{createdRoomCode}</p>
-                  <p className="text-xs text-muted-foreground mt-2">Share this code with other players</p>
+              {createdRoomCode ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-primary/10 rounded-lg border-2 border-primary">
+                    <p className="text-sm text-muted-foreground mb-2">Room Code:</p>
+                    <p className="text-4xl font-black text-primary tracking-widest">{createdRoomCode}</p>
+                    <p className="text-xs text-muted-foreground mt-2">Share this code with other players</p>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      // Use the stored room ID to proceed
+                      if (createdRoomId) {
+                        onCreateRoom(createdRoomId)
+                      } else if (createdRoomCode) {
+                        // Fallback: find the room ID by code
+                        fetch(`/api/rooms/code/${createdRoomCode}`)
+                          .then(res => res.json())
+                          .then(data => {
+                            if (data.success && data.room) {
+                              onCreateRoom(data.room.id)
+                            } else {
+                              alert('Could not find room. Please try creating again.')
+                            }
+                          })
+                          .catch(() => {
+                            alert('Error proceeding to room')
+                          })
+                      }
+                    }}
+                    size="lg"
+                    className="w-full"
+                  >
+                    Continue to Setup
+                  </Button>
                 </div>
+              ) : (
+                <Button
+                  onClick={handleCreateRoom}
+                  disabled={isCreating || !location}
+                  size="lg"
+                  className="w-full"
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Create Race Room"
+                  )}
+                </Button>
               )}
-              <Button
-                onClick={handleCreateRoom}
-                disabled={isCreating || !location}
-                size="lg"
-                className="w-full"
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  "Create Race Room"
-                )}
-              </Button>
             </div>
           </Card>
         </motion.div>

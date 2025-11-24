@@ -137,27 +137,57 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
         const response = await fetch(`/api/rooms/${roomId}`)
         const data = await response.json()
         if (data.success && data.room.players) {
-          setRunners((prev) =>
-            prev.map((runner) => {
-              const roomPlayer = data.room.players.find((p: any) => p.id === runner.id)
-              if (roomPlayer && runner.id !== playerId) {
-                // Update other players from room data
-                return {
-                  ...runner,
-                  distance: roomPlayer.distance || runner.distance,
-                  speed: roomPlayer.speed || runner.speed,
-                  points: roomPlayer.points || runner.points || 0,
-                  location: roomPlayer.lat && roomPlayer.lng 
-                    ? { lat: roomPlayer.lat, lng: roomPlayer.lng }
-                    : runner.location,
-                  time: data.room.startTime 
-                    ? Math.floor((Date.now() - data.room.startTime) / 1000)
-                    : runner.time,
+          setRunners((prev) => {
+            const roomPlayerIds = new Set(data.room.players.map((p: any) => p.id))
+            
+            // First, update existing runners and remove those who left
+            const updatedRunners = prev
+              .filter((runner) => {
+                // Keep current player even if not in room (they're still here)
+                // Remove other players who are no longer in the room
+                return runner.id === playerId || roomPlayerIds.has(runner.id)
+              })
+              .map((runner) => {
+                const roomPlayer = data.room.players.find((p: any) => p.id === runner.id)
+                if (roomPlayer && runner.id !== playerId) {
+                  // Update other players from room data
+                  return {
+                    ...runner,
+                    distance: roomPlayer.distance || runner.distance,
+                    speed: roomPlayer.speed || runner.speed,
+                    points: roomPlayer.points || runner.points || 0,
+                    location: roomPlayer.lat && roomPlayer.lng 
+                      ? { lat: roomPlayer.lat, lng: roomPlayer.lng }
+                      : runner.location,
+                    time: data.room.startTime 
+                      ? Math.floor((Date.now() - data.room.startTime) / 1000)
+                      : runner.time,
+                  }
                 }
-              }
-              return runner
-            }),
-          )
+                return runner
+              })
+
+            // Then, add any new players from the room that aren't in our runners list
+            const existingRunnerIds = new Set(updatedRunners.map(r => r.id))
+            const newPlayers = data.room.players
+              .filter((p: any) => !existingRunnerIds.has(p.id))
+              .map((p: any) => ({
+                id: p.id,
+                name: p.name,
+                color: p.color,
+                avatar: p.avatar,
+                distance: p.distance || 0,
+                speed: p.speed || 0,
+                time: data.room.startTime 
+                  ? Math.floor((Date.now() - data.room.startTime) / 1000)
+                  : 0,
+                points: p.points || 0,
+                location: p.lat && p.lng ? { lat: p.lat, lng: p.lng } : undefined,
+                pathHistory: [],
+              }))
+
+            return [...updatedRunners, ...newPlayers]
+          })
         }
       } catch (error) {
         console.error('Error syncing room:', error)
@@ -166,6 +196,46 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
 
     const interval = setInterval(syncRoom, 1000) // Sync every second
     return () => clearInterval(interval)
+  }, [roomId, playerId])
+
+  // Leave room when component unmounts or page closes
+  useEffect(() => {
+    if (!roomId || !playerId) return
+
+    const handleLeave = async () => {
+      try {
+        await fetch(`/api/rooms/${roomId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'leave',
+            playerId,
+          }),
+        })
+      } catch (error) {
+        console.error('Error leaving room:', error)
+      }
+    }
+
+    const handleBeforeUnload = () => {
+      // Use sendBeacon for more reliable delivery on page close
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({
+          action: 'leave',
+          playerId,
+        })], { type: 'application/json' })
+        navigator.sendBeacon(`/api/rooms/${roomId}`, blob)
+      } else {
+        handleLeave()
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      handleLeave()
+    }
   }, [roomId, playerId])
 
   // Update elapsed time

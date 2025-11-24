@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRoom, setRoom } from '@/lib/rooms'
+import { getRoom, setRoom, getRooms } from '@/lib/rooms'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> | { roomId: string } }
 ) {
   try {
-    const roomId = params.roomId
+    // Handle both Promise and direct params (for Next.js version compatibility)
+    const resolvedParams = params instanceof Promise ? await params : params
+    const roomId = resolvedParams.roomId
+    
+    console.log('GET room request for ID:', roomId)
     const room = getRoom(roomId)
+    
+    if (!room) {
+      const allRoomIds = Array.from(getRooms().keys())
+      console.error('Room not found:', roomId, 'Available rooms:', allRoomIds)
+    }
 
     if (!room) {
       return NextResponse.json(
@@ -20,6 +29,7 @@ export async function GET(
       success: true,
       room: {
         id: room.id,
+        code: room.code || null,
         players: room.players,
         isActive: room.isActive,
         startTime: room.startTime,
@@ -36,14 +46,38 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> | { roomId: string } }
 ) {
   try {
-    const roomId = params.roomId
-    const body = await request.json()
+    // Handle both Promise and direct params (for Next.js version compatibility)
+    const resolvedParams = params instanceof Promise ? await params : params
+    const roomId = resolvedParams.roomId
+    
+    // Handle both JSON and Blob (from sendBeacon) requests
+    let body: any
+    const contentType = request.headers.get('content-type')
+    if (contentType?.includes('application/json')) {
+      body = await request.json()
+    } else {
+      // Handle blob from sendBeacon
+      try {
+        const blob = await request.blob()
+        const text = await blob.text()
+        body = JSON.parse(text)
+      } catch (error) {
+        // If blob parsing fails, try JSON
+        body = await request.json()
+      }
+    }
     const { action, playerId, lat, lng, distance, speed, points } = body
 
+    console.log('POST room request for ID:', roomId, 'action:', action)
     const room = getRoom(roomId)
+    
+    if (!room) {
+      const allRoomIds = Array.from(getRooms().keys())
+      console.error('Room not found in POST:', roomId, 'Available rooms:', allRoomIds)
+    }
     if (!room) {
       return NextResponse.json(
         { success: false, error: 'Room not found' },
@@ -76,6 +110,26 @@ export async function POST(
           points: 0,
           joinedAt: Date.now(),
         })
+      } else {
+        // Update existing player info if they're rejoining
+        existingPlayer.name = playerName || existingPlayer.name
+        existingPlayer.color = playerColor || existingPlayer.color
+        existingPlayer.avatar = playerAvatar || existingPlayer.avatar
+        if (lat !== undefined) existingPlayer.lat = lat
+        if (lng !== undefined) existingPlayer.lng = lng
+        existingPlayer.lastUpdate = Date.now()
+      }
+    } else if (action === 'updatePlayer') {
+      // Update player info (name, color, avatar)
+      const { playerName, playerColor, playerAvatar } = body
+      const existingPlayer = room.players.find((p: any) => p.id === playerId)
+      if (existingPlayer) {
+        if (playerName !== undefined) existingPlayer.name = playerName
+        if (playerColor !== undefined) existingPlayer.color = playerColor
+        if (playerAvatar !== undefined) existingPlayer.avatar = playerAvatar
+        if (lat !== undefined) existingPlayer.lat = lat
+        if (lng !== undefined) existingPlayer.lng = lng
+        existingPlayer.lastUpdate = Date.now()
       }
     } else if (action === 'start') {
       if (room.players.length < 2) {
@@ -96,17 +150,37 @@ export async function POST(
         if (points !== undefined) player.points = points
         player.lastUpdate = Date.now()
       }
+    } else if (action === 'leave') {
+      // Remove player from room
+      room.players = room.players.filter((p: any) => p.id !== playerId)
+      
+      // If room becomes empty and not active, we could delete it, but let's keep it for now
+      // If race is active and only 1 player left, we might want to handle that
+      if (room.isActive && room.players.length < 2) {
+        // Race can continue with 1 player, but we could end it if needed
+        // For now, just let it continue
+      }
     }
 
     setRoom(roomId, room)
 
+    // Get the updated room to ensure we have the latest data
+    const updatedRoom = getRoom(roomId)
+    if (!updatedRoom) {
+      return NextResponse.json(
+        { success: false, error: 'Room not found after update' },
+        { status: 500 }
+      )
+    }
+
     return NextResponse.json({
       success: true,
       room: {
-        id: room.id,
-        players: room.players,
-        isActive: room.isActive,
-        startTime: room.startTime,
+        id: updatedRoom.id,
+        code: updatedRoom.code || null,
+        players: updatedRoom.players,
+        isActive: updatedRoom.isActive,
+        startTime: updatedRoom.startTime,
       },
     })
   } catch (error) {

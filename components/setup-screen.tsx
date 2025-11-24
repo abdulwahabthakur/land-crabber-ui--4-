@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -20,20 +20,67 @@ type SetupScreenProps = {
   onBegin: (runners: Runner[]) => void
   player: Player
   roomId: string | null
+  onLeave?: () => void
 }
 
-export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
+export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenProps) {
   const [runners, setRunners] = useState<Runner[]>([
     { id: player.id, name: player.name, color: player.color, avatar: player.avatar },
   ])
   const [isLoadingRoom, setIsLoadingRoom] = useState(!!roomId)
   const [roomCode, setRoomCode] = useState<string | null>(null)
+  const hasJoinedRef = useRef(false)
 
-  // Load players from room if roomId exists
+  // Load players from room if roomId exists and join if needed
   useEffect(() => {
     if (!roomId) {
       setIsLoadingRoom(false)
       return
+    }
+
+    // Reset join status when roomId changes
+    hasJoinedRef.current = false
+
+    const playerId = player.id
+    const playerName = player.name
+    const playerColor = player.color
+    const playerAvatar = player.avatar
+
+    const joinRoom = async () => {
+      if (hasJoinedRef.current) return
+      
+      try {
+        // Get current location for joining
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 5000,
+            enableHighAccuracy: true,
+          })
+        })
+
+        const joinResponse = await fetch(`/api/rooms/${roomId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'join',
+            playerId: playerId,
+            playerName: playerName,
+            playerColor: playerColor,
+            playerAvatar: playerAvatar,
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          }),
+        })
+
+        const joinData = await joinResponse.json()
+        if (joinData.success) {
+          hasJoinedRef.current = true
+          console.log('Successfully joined room:', roomId)
+        }
+      } catch (error) {
+        console.error('Error joining room:', error)
+        // Continue anyway - might already be in room
+      }
     }
 
     const loadRoom = async () => {
@@ -44,6 +91,27 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
           // Get room code if available
           if (data.room.code) {
             setRoomCode(data.room.code)
+          }
+          
+          // Check if current player is in the room
+          const playerInRoom = data.room.players?.some((p: any) => p.id === playerId)
+          
+          // If not in room and haven't tried joining yet, join now
+          if (!playerInRoom && !hasJoinedRef.current) {
+            await joinRoom()
+            // Reload room after joining
+            const reloadResponse = await fetch(`/api/rooms/${roomId}`)
+            const reloadData = await reloadResponse.json()
+            if (reloadData.success && reloadData.room?.players) {
+              const roomRunners = reloadData.room.players.map((p: any) => ({
+                id: p.id,
+                name: p.name,
+                color: p.color,
+                avatar: p.avatar,
+              }))
+              setRunners(roomRunners)
+            }
+            return
           }
           
           if (data.room.players) {
@@ -63,12 +131,53 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
       }
     }
 
+    // First load - join if needed, then start polling
     loadRoom()
 
-    // Poll for room updates
+    // Poll for room updates every 2 seconds
     const interval = setInterval(loadRoom, 2000)
     return () => clearInterval(interval)
-  }, [roomId])
+  }, [roomId, player.id])
+
+  // Leave room when component unmounts or page closes
+  useEffect(() => {
+    if (!roomId || !player.id) return
+
+    const handleLeave = async () => {
+      try {
+        await fetch(`/api/rooms/${roomId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'leave',
+            playerId: player.id,
+          }),
+        })
+      } catch (error) {
+        console.error('Error leaving room:', error)
+      }
+    }
+
+    const handleBeforeUnload = () => {
+      // Use sendBeacon for more reliable delivery on page close
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({
+          action: 'leave',
+          playerId: player.id,
+        })], { type: 'application/json' })
+        navigator.sendBeacon(`/api/rooms/${roomId}`, blob)
+      } else {
+        handleLeave()
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      handleLeave()
+    }
+  }, [roomId, player.id])
 
   const addRunner = () => {
     if (runners.length < 6) {
@@ -98,7 +207,34 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
   }
 
   const updateRunner = (id: string, field: keyof Runner, value: string) => {
-    setRunners(runners.map((r) => (r.id === id ? { ...r, [field]: value } : r)))
+    const updatedRunners = runners.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    setRunners(updatedRunners)
+    
+    // If updating current player in a room, update the room
+    if (roomId && id === player.id) {
+      // Get current location
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const updatedRunner = updatedRunners.find(r => r.id === id)
+          if (updatedRunner) {
+            fetch(`/api/rooms/${roomId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'updatePlayer',
+                playerId: player.id,
+                playerName: updatedRunner.name,
+                playerColor: updatedRunner.color,
+                playerAvatar: updatedRunner.avatar,
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              }),
+            }).catch(console.error)
+          }
+        },
+        (error) => console.error('GPS error:', error)
+      )
+    }
   }
 
   const canStart = runners.every((r) => r.name.trim() !== "")
@@ -300,7 +436,7 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.3 }}
-          className="pt-4"
+          className="pt-4 space-y-3"
         >
           <Button
             onClick={handleBegin}
@@ -310,6 +446,31 @@ export function SetupScreen({ onBegin, player, roomId }: SetupScreenProps) {
           >
             {"Let's Crab! 🦀"}
           </Button>
+          {roomId && onLeave && (
+            <Button
+              onClick={async () => {
+                try {
+                  await fetch(`/api/rooms/${roomId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'leave',
+                      playerId: player.id,
+                    }),
+                  })
+                  onLeave()
+                } catch (error) {
+                  console.error('Error leaving room:', error)
+                  onLeave() // Still navigate even if API call fails
+                }
+              }}
+              variant="outline"
+              size="lg"
+              className="w-full"
+            >
+              Leave Room
+            </Button>
+          )}
         </motion.div>
       </div>
     </div>

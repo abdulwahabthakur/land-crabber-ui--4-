@@ -22,8 +22,9 @@ export async function POST(request: NextRequest) {
       if (distance <= radius && !room.isActive && room.players.length < 6) {
         nearbyRooms.push({
           id: room.id,
+          code: room.code || null,
           playerCount: room.players.length,
-          distance: distance.toFixed(2),
+          distance: distance.toFixed(3), // More precision for accuracy
           lat: room.lat,
           lng: room.lng,
         })

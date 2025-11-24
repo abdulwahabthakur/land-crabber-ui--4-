@@ -55,3 +55,47 @@ CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
 -- Create index on color for faster lookups
 CREATE INDEX IF NOT EXISTS users_color_idx ON users(color);
 
+-- Create rooms table for multiplayer functionality
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  code TEXT UNIQUE,
+  lat DOUBLE PRECISION NOT NULL,
+  lng DOUBLE PRECISION NOT NULL,
+  is_active BOOLEAN DEFAULT false,
+  start_time BIGINT,
+  players JSONB DEFAULT '[]'::jsonb,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+-- Enable Row Level Security for rooms
+ALTER TABLE rooms ENABLE ROW LEVEL SECURITY;
+
+-- Allow anyone to read rooms (for finding and joining)
+CREATE POLICY "Anyone can read rooms" ON rooms
+  FOR SELECT
+  USING (true);
+
+-- Allow anyone to insert rooms (for creating)
+CREATE POLICY "Anyone can create rooms" ON rooms
+  FOR INSERT
+  WITH CHECK (true);
+
+-- Allow anyone to update rooms (for joining, leaving, starting)
+CREATE POLICY "Anyone can update rooms" ON rooms
+  FOR UPDATE
+  USING (true);
+
+-- Allow anyone to delete rooms (for cleanup)
+CREATE POLICY "Anyone can delete rooms" ON rooms
+  FOR DELETE
+  USING (true);
+
+-- Create indexes for faster queries
+CREATE INDEX IF NOT EXISTS rooms_code_idx ON rooms(code);
+CREATE INDEX IF NOT EXISTS rooms_is_active_idx ON rooms(is_active);
+CREATE INDEX IF NOT EXISTS rooms_created_at_idx ON rooms(created_at);
+
+-- Create a GIN index on players JSONB for faster queries
+CREATE INDEX IF NOT EXISTS rooms_players_idx ON rooms USING GIN (players);
+

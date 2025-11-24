@@ -45,9 +45,51 @@ export default function Page() {
 
   // Get player info based on IP on mount
   useEffect(() => {
+    let isMounted = true
+    
     const getPlayerInfo = async () => {
+      // Set a timeout to ensure we don't wait forever
+      const timeoutId = setTimeout(() => {
+        if (isMounted) {
+          // Fallback if API takes too long
+          const fallbackPlayer: Player = {
+            id: `player-${Date.now()}`,
+            ip: 'unknown',
+            name: 'Player 1',
+            color: AVAILABLE_COLORS[0].value,
+            avatar: AVAILABLE_AVATARS[0],
+          }
+          
+          // Try to load from localStorage
+          if (typeof window !== 'undefined') {
+            const savedPlayer = localStorage.getItem('land-crabber-player')
+            if (savedPlayer) {
+              try {
+                const parsed = JSON.parse(savedPlayer)
+                setPlayer({ ...fallbackPlayer, ...parsed })
+              } catch {
+                setPlayer(fallbackPlayer)
+              }
+            } else {
+              setPlayer(fallbackPlayer)
+            }
+          } else {
+            setPlayer(fallbackPlayer)
+          }
+          setIsLoading(false)
+        }
+      }, 2000) // 2 second timeout
+
       try {
-        const response = await fetch('/api/ip')
+        const controller = new AbortController()
+        const fetchTimeout = setTimeout(() => controller.abort(), 3000)
+        
+        const response = await fetch('/api/ip', { 
+          signal: controller.signal
+        })
+        clearTimeout(fetchTimeout)
+        clearTimeout(timeoutId)
+        
         if (!response.ok) {
           throw new Error('Failed to fetch IP')
         }
@@ -84,20 +126,44 @@ export default function Page() {
           throw new Error('API returned unsuccessful response')
         }
       } catch (err) {
+        clearTimeout(timeoutId)
         console.error('Error getting player info:', err)
         // Fallback player - always set something so page doesn't stay loading
-        setPlayer({
+        const fallbackPlayer: Player = {
           id: `player-${Date.now()}`,
           ip: 'unknown',
           name: 'Player 1',
           color: AVAILABLE_COLORS[0].value,
           avatar: AVAILABLE_AVATARS[0],
-        })
+        }
+        
+        // Try to load from localStorage
+        if (typeof window !== 'undefined') {
+          const savedPlayer = localStorage.getItem('land-crabber-player')
+          if (savedPlayer) {
+            try {
+              const parsed = JSON.parse(savedPlayer)
+              setPlayer({ ...fallbackPlayer, ...parsed })
+            } catch {
+              setPlayer(fallbackPlayer)
+            }
+          } else {
+            setPlayer(fallbackPlayer)
+          }
+        } else {
+          setPlayer(fallbackPlayer)
+        }
       } finally {
-        setIsLoading(false)
+        if (isMounted) {
+          setIsLoading(false)
+        }
       }
     }
     getPlayerInfo()
+    
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   // Save player to localStorage when it changes
@@ -178,9 +244,14 @@ export default function Page() {
     setPlayer((prev) => prev ? { ...prev, ...updates } : null)
   }
 
+  const handleLeaveRoom = () => {
+    setCurrentRoomId(null)
+    setScreen("landing")
+  }
+
   return (
     <div className="min-h-screen bg-background">
-      {screen === "landing" && (
+      {screen === "landing" && player && (
         <LandingScreen onStart={handleStartRace} onJoinRoom={handleJoinRoomScreen} player={player} onUpdatePlayer={updatePlayer} />
       )}
       {screen === "room" && player && (
@@ -191,11 +262,26 @@ export default function Page() {
           onBack={() => setScreen("landing")}
         />
       )}
-      {screen === "setup" && <SetupScreen onBegin={handleBeginRace} player={player} roomId={currentRoomId} />}
-      {screen === "race" && raceData && (
-        <RaceScreen initialRunners={runners} startTime={raceData.startTime} onEndRace={handleEndRace} playerId={player?.id} roomId={currentRoomId} />
+      {screen === "setup" && player && (
+        <SetupScreen 
+          onBegin={handleBeginRace} 
+          player={player} 
+          roomId={currentRoomId} 
+          onLeave={handleLeaveRoom} 
+        />
       )}
-      {screen === "results" && <ResultsScreen runners={runners} onRestart={handleRestart} player={player} />}
+      {screen === "race" && raceData && player && (
+        <RaceScreen 
+          initialRunners={runners} 
+          startTime={raceData.startTime} 
+          onEndRace={handleEndRace} 
+          playerId={player.id} 
+          roomId={currentRoomId} 
+        />
+      )}
+      {screen === "results" && player && (
+        <ResultsScreen runners={runners} onRestart={handleRestart} player={player} />
+      )}
     </div>
   )
 }
