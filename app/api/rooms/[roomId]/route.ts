@@ -71,7 +71,7 @@ export async function POST(
         body = await request.json()
       }
     }
-    const { action, playerId, lat, lng, distance, speed, points } = body
+    const { action, playerId, lat, lng, distance, speed, points, duration } = body
 
     console.log('POST room request for ID:', roomId, 'action:', action)
     const room = getRoom(roomId)
@@ -135,12 +135,21 @@ export async function POST(
       }
     } else if (action === 'start') {
       // Only host can start the game
+      // If room doesn't have a hostId, set it to the first player or current player
+      if (!room.hostId) {
+        room.hostId = room.players.length > 0 ? room.players[0].id : playerId
+        console.log('Setting hostId for room without host:', { roomId, hostId: room.hostId })
+      }
+      
       if (room.hostId && room.hostId !== playerId) {
+        console.log('Start denied - not host:', { roomId, hostId: room.hostId, playerId })
         return NextResponse.json(
           { success: false, error: 'Only the host can start the game' },
           { status: 403 }
         )
       }
+      
+      console.log('Start allowed - is host:', { roomId, hostId: room.hostId, playerId })
       
       if (room.players.length < 2) {
         return NextResponse.json(
@@ -149,12 +158,14 @@ export async function POST(
         )
       }
       
-      const { duration } = body // Duration in seconds (optional)
+      // Duration in seconds (optional) - already extracted from body above
       room.isActive = true
       room.startTime = Date.now()
-      if (duration !== undefined) {
+      if (duration !== undefined && duration !== null) {
         room.duration = duration // Store duration for auto-stop
       }
+      
+      console.log('Race started:', { roomId, playerCount: room.players.length, duration: room.duration })
     } else if (action === 'update') {
       const player = room.players.find((p: any) => p.id === playerId)
       if (player) {

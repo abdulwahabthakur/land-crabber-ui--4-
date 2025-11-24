@@ -97,7 +97,19 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
           }
           
           // Check if current player is the host
-          setIsHost(data.room.hostId === playerId)
+          const hostId = data.room.hostId
+          const isPlayerHost = hostId === playerId
+          console.log('Host check:', { hostId, playerId, isPlayerHost, roomId, roomData: data.room })
+          setIsHost(isPlayerHost)
+          
+          // If no hostId exists, we might be the first player (host)
+          if (!hostId && data.room.players && data.room.players.length > 0) {
+            const firstPlayer = data.room.players[0]
+            if (firstPlayer.id === playerId) {
+              console.log('No hostId set, but we are first player - setting as host')
+              setIsHost(true)
+            }
+          }
           
           // Set race duration if host has set it
           if (data.room.duration) {
@@ -236,6 +248,12 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
   }
 
   const updateRunner = (id: string, field: keyof Runner, value: string) => {
+    // Only allow editing your own character
+    if (id !== player.id) {
+      console.warn('Cannot edit other players')
+      return
+    }
+    
     const updatedRunners = runners.map((r) => (r.id === id ? { ...r, [field]: value } : r))
     setRunners(updatedRunners)
     
@@ -280,24 +298,28 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
       return
     }
     
-    // If in a room, check if user is host
+    // If in a room, check if user is host and start the race
     if (roomId) {
-      if (!isHost) {
-        alert('Only the host can start the race')
-        return
-      }
-      
       try {
+        // Send start request with playerId - server will verify host status
         const response = await fetch(`/api/rooms/${roomId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             action: 'start',
+            playerId: player.id, // CRITICAL: Send playerId so server can verify host
             duration: raceDuration, // Send duration to server
           }),
         })
+        
         const data = await response.json()
-        if (data.success && data.room.players.length >= 2) {
+        
+        if (!data.success) {
+          alert(data.error || 'Failed to start race')
+          return
+        }
+        
+        if (data.room && data.room.players && data.room.players.length >= 2) {
           // Convert room players to runners
           const roomRunners = data.room.players.map((p: any) => ({
             id: p.id,
@@ -307,7 +329,7 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
           }))
           onBegin(roomRunners)
         } else {
-          alert(data.error || 'Need at least 2 players in the room to start')
+          alert('Need at least 2 players in the room to start')
         }
       } catch (error) {
         console.error('Error starting race:', error)
@@ -385,7 +407,9 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
                           placeholder={`Runner ${index + 1} name`}
                           value={runner.name}
                           onChange={(e) => updateRunner(runner.id, "name", e.target.value)}
-                          className="text-lg font-semibold border-2 focus:border-primary"
+                          disabled={runner.id !== player.id}
+                          readOnly={runner.id !== player.id}
+                          className={`text-lg font-semibold border-2 ${runner.id === player.id ? 'focus:border-primary' : 'bg-muted/50 cursor-not-allowed'}`}
                         />
                       </div>
 
@@ -402,49 +426,64 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
                       )}
                     </div>
 
-                    {/* Avatar Selection (Only for added runners) */}
+                    {/* Avatar Selection (Only for current player) */}
+                    {runner.id === player.id && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground font-medium">Your Avatar:</p>
+                        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                          {AVAILABLE_AVATARS.map((avatar) => (
+                            <button
+                              key={avatar}
+                              onClick={() => updateRunner(runner.id, "avatar", avatar)}
+                              className={`text-xl p-1 rounded-full transition-transform ${runner.avatar === avatar ? "bg-accent/20 scale-125" : "hover:scale-110 opacity-60"}`}
+                            >
+                              {avatar}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {runner.id !== player.id && (
-                      <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                        {AVAILABLE_AVATARS.map((avatar) => (
-                          <button
-                            key={avatar}
-                            onClick={() => updateRunner(runner.id, "avatar", avatar)}
-                            className={`text-xl p-1 rounded-full transition-transform ${runner.avatar === avatar ? "bg-accent/20 scale-125" : "hover:scale-110 opacity-60"}`}
-                          >
-                            {avatar}
-                          </button>
-                        ))}
+                      <div className="text-xs text-muted-foreground italic">
+                        {runner.name || 'Player'} can edit their own avatar
                       </div>
                     )}
 
-                    {/* Color Selector */}
-                    <div className="flex gap-2 flex-wrap">
-                      {AVAILABLE_COLORS.map((color) => {
-                        // Strict check: Color is taken if ANY other runner in this current setup has it
-                        // OR if a global user (other than current user) has it
-                        const isTakenByOtherRunner = runners.some((r) => r.id !== runner.id && r.color === color.value)
+                    {/* Color Selector - Only editable by the player themselves */}
+                    <div className="space-y-2">
+                      {runner.id === player.id ? (
+                        <>
+                          <p className="text-xs text-muted-foreground font-medium">Your Color:</p>
+                          <div className="flex gap-2 flex-wrap">
+                            {AVAILABLE_COLORS.map((color) => {
+                              // Color is taken if ANY other runner has it
+                              const isTakenByOtherRunner = runners.some((r) => r.id !== runner.id && r.color === color.value)
+                              const isTaken = isTakenByOtherRunner
 
-                        // We NO LONGER check globalUserColors here.
-                        // This allows Player 2 to pick "Blue" even if an offline user has "Blue".
-                        const isTaken = isTakenByOtherRunner
-
-                        return (
-                          <button
-                            key={color.value}
-                            onClick={() => !isTaken && updateRunner(runner.id, "color", color.value)}
-                            disabled={isTaken || runner.id === player.id}
-                            className={`w-8 h-8 rounded-full transition-all duration-200 ${
-                              runner.color === color.value
-                                ? "ring-2 ring-ring ring-offset-2 scale-110"
-                                  : isTaken || runner.id === player.id
-                                  ? "opacity-20 cursor-not-allowed"
-                                  : "hover:scale-105"
-                            }`}
-                            style={{ backgroundColor: color.value }}
-                            title={isTaken ? `${color.name} (Taken)` : color.name}
-                          />
-                        )
-                      })}
+                              return (
+                                <button
+                                  key={color.value}
+                                  onClick={() => !isTaken && updateRunner(runner.id, "color", color.value)}
+                                  disabled={isTaken}
+                                  className={`w-8 h-8 rounded-full transition-all duration-200 ${
+                                    runner.color === color.value
+                                      ? "ring-2 ring-ring ring-offset-2 scale-110"
+                                        : isTaken
+                                        ? "opacity-20 cursor-not-allowed"
+                                        : "hover:scale-105"
+                                  }`}
+                                  style={{ backgroundColor: color.value }}
+                                  title={isTaken ? `${color.name} (Taken)` : color.name}
+                                />
+                              )
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-xs text-muted-foreground italic">
+                          {runner.name || 'Player'} can edit their own color
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -537,8 +576,11 @@ export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: S
             </Card>
           )}
           <Button
-            onClick={handleBegin}
-            disabled={!canStart || (roomId && !isHost)}
+            onClick={() => {
+              console.log('Start button clicked:', { canStart, isHost, roomId, playerId: player.id })
+              handleBegin()
+            }}
+            disabled={!canStart}
             size="lg"
             className="w-full text-2xl font-black py-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >

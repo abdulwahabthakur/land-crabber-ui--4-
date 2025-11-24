@@ -92,6 +92,12 @@ export async function POST(request: NextRequest) {
         duration: null, // Race duration in seconds (null = no auto-stop)
         createdAt: Date.now(),
       }
+    } else {
+      // If room exists but doesn't have a hostId, set it to the first player or current player
+      if (!room.hostId) {
+        room.hostId = room.players.length > 0 ? room.players[0].id : playerId
+        console.log('Setting hostId for existing room:', { roomId, hostId: room.hostId })
+      }
     }
 
     // Check if player already in room
