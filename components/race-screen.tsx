@@ -45,9 +45,10 @@ type RaceScreenProps = {
   onEndRace: (runners: Runner[]) => void
   playerId?: string
   roomId?: string | null
+  duration?: number | null // Race duration in seconds (null = no auto-stop)
 }
 
-export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roomId }: RaceScreenProps) {
+export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roomId, duration }: RaceScreenProps) {
   const [runners, setRunners] = useState(
     initialRunners.map((r) => ({
       ...r,
@@ -128,7 +129,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
     return () => navigator.geolocation.clearWatch(watchId)
   }, [playerId, roomId])
 
-  // Sync with room if in a room
+  // Sync with room if in a room - update all players' positions
   useEffect(() => {
     if (!roomId) return
 
@@ -136,57 +137,66 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
       try {
         const response = await fetch(`/api/rooms/${roomId}`)
         const data = await response.json()
-        if (data.success && data.room.players) {
+        if (data.success && data.room && data.room.players) {
           setRunners((prev) => {
-            const roomPlayerIds = new Set(data.room.players.map((p: any) => p.id))
+            const roomPlayers = data.room.players as any[]
+            const roomPlayerIds = new Set(roomPlayers.map((p: any) => p.id))
             
-            // First, update existing runners and remove those who left
-            const updatedRunners = prev
-              .filter((runner) => {
-                // Keep current player even if not in room (they're still here)
-                // Remove other players who are no longer in the room
-                return runner.id === playerId || roomPlayerIds.has(runner.id)
-              })
-              .map((runner) => {
-                const roomPlayer = data.room.players.find((p: any) => p.id === runner.id)
-                if (roomPlayer && runner.id !== playerId) {
-                  // Update other players from room data
-                  return {
-                    ...runner,
-                    distance: roomPlayer.distance || runner.distance,
-                    speed: roomPlayer.speed || runner.speed,
-                    points: roomPlayer.points || runner.points || 0,
-                    location: roomPlayer.lat && roomPlayer.lng 
-                      ? { lat: roomPlayer.lat, lng: roomPlayer.lng }
-                      : runner.location,
-                    time: data.room.startTime 
-                      ? Math.floor((Date.now() - data.room.startTime) / 1000)
-                      : runner.time,
-                  }
+            // Create a map of current runners for quick lookup
+            const currentRunnersMap = new Map(prev.map(r => [r.id, r]))
+            
+            // Build updated runners list from room data
+            const updatedRunners = roomPlayers.map((roomPlayer: any) => {
+              const existingRunner = currentRunnersMap.get(roomPlayer.id)
+              
+              // If this is the current player, preserve their local state (GPS updates are more accurate)
+              if (roomPlayer.id === playerId && existingRunner) {
+                return existingRunner
+              }
+              
+              // For other players, use room data
+              const newLocation = roomPlayer.lat && roomPlayer.lng 
+                ? { lat: roomPlayer.lat, lng: roomPlayer.lng }
+                : existingRunner?.location
+              
+              // Update path history if location changed
+              let pathHistory = existingRunner?.pathHistory || []
+              if (newLocation && existingRunner?.location) {
+                const locChanged = 
+                  Math.abs(newLocation.lat - existingRunner.location.lat) > 0.00001 ||
+                  Math.abs(newLocation.lng - existingRunner.location.lng) > 0.00001
+                if (locChanged) {
+                  pathHistory = [...(pathHistory || []), newLocation]
                 }
-                return runner
-              })
-
-            // Then, add any new players from the room that aren't in our runners list
-            const existingRunnerIds = new Set(updatedRunners.map(r => r.id))
-            const newPlayers = data.room.players
-              .filter((p: any) => !existingRunnerIds.has(p.id))
-              .map((p: any) => ({
-                id: p.id,
-                name: p.name,
-                color: p.color,
-                avatar: p.avatar,
-                distance: p.distance || 0,
-                speed: p.speed || 0,
+              } else if (newLocation && !existingRunner?.location) {
+                pathHistory = [newLocation]
+              }
+              
+              return {
+                id: roomPlayer.id,
+                name: roomPlayer.name,
+                color: roomPlayer.color,
+                avatar: roomPlayer.avatar,
+                distance: roomPlayer.distance || 0,
+                speed: roomPlayer.speed || 0,
                 time: data.room.startTime 
                   ? Math.floor((Date.now() - data.room.startTime) / 1000)
-                  : 0,
-                points: p.points || 0,
-                location: p.lat && p.lng ? { lat: p.lat, lng: p.lng } : undefined,
-                pathHistory: [],
-              }))
+                  : existingRunner?.time || 0,
+                points: roomPlayer.points || 0,
+                location: newLocation,
+                pathHistory: pathHistory,
+              }
+            })
 
-            return [...updatedRunners, ...newPlayers]
+            // If current player is not in room players (shouldn't happen, but handle it)
+            if (!roomPlayerIds.has(playerId || '')) {
+              const currentPlayer = prev.find(r => r.id === playerId)
+              if (currentPlayer) {
+                updatedRunners.push(currentPlayer)
+              }
+            }
+
+            return updatedRunners
           })
         }
       } catch (error) {
@@ -238,12 +248,27 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
     }
   }, [roomId, playerId])
 
-  // Update elapsed time
+  // Update elapsed time and check for auto-stop
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now()
       const elapsed = Math.floor((now - startTime) / 1000)
       setElapsedTime(elapsed)
+
+      // Check if duration has been reached (auto-stop)
+      if (duration && elapsed >= duration) {
+        // Auto-end the race
+        setRunners((prev) => {
+          const finalRunners = prev.map((runner) => ({
+            ...runner,
+            time: elapsed,
+          }))
+          // End race with final runners
+          setTimeout(() => onEndRace(finalRunners), 100)
+          return finalRunners
+        })
+        return
+      }
 
       // Update time for all runners
       setRunners((prev) =>
@@ -255,7 +280,7 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [startTime])
+  }, [startTime, duration, onEndRace])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -263,14 +288,16 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
-  // Sort by distance first, then by points
+  // Sort by points first (primary), then by distance (secondary)
   const sortedRunners = [...runners].sort((a, b) => {
-    if (Math.abs(b.distance - a.distance) > 0.01) {
-      return b.distance - a.distance
+    // Primary sort: points (higher is better)
+    if (b.points !== a.points) {
+      return b.points - a.points
     }
-    return b.points - a.points
+    // Secondary sort: distance (higher is better)
+    return b.distance - a.distance
   })
-  const leader = sortedRunners[0]
+  const leader = sortedRunners[0] || runners[0]
 
   const handleEndRace = () => {
     onEndRace(runners)
@@ -285,45 +312,54 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
           animate={{ y: 0, opacity: 1 }}
           className="text-center space-y-4 pt-8"
         >
-          <div className="text-7xl font-black text-primary tabular-nums">{formatTime(elapsedTime)}</div>
+          <div className="space-y-2">
+            <div className="text-7xl font-black text-primary tabular-nums">{formatTime(elapsedTime)}</div>
+            {duration && (
+              <div className="text-sm text-muted-foreground">
+                Auto-stop: {formatTime(duration - elapsedTime)} remaining
+              </div>
+            )}
+          </div>
           <div className="flex justify-center gap-8 text-sm text-muted-foreground">
             <div className="text-center">
-              <div className="text-2xl font-bold text-foreground">{leader.distance.toFixed(2)}</div>
-              <div>km (leader)</div>
+              <div className="text-2xl font-bold text-foreground">{leader?.points || 0}</div>
+              <div>points (leader)</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-foreground">{leader.speed.toFixed(1)}</div>
+              <div className="text-2xl font-bold text-foreground">{leader?.distance.toFixed(2) || '0.00'}</div>
+              <div>km</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-foreground">{leader?.speed.toFixed(1) || '0.0'}</div>
               <div>km/h (top speed)</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-foreground">{leader.points}</div>
-              <div>points</div>
             </div>
           </div>
         </motion.div>
 
         {/* Leader Banner */}
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="sticky top-4 z-10"
-        >
-          <Card className="p-4 bg-gradient-to-r from-primary/20 to-accent/20 border-2 border-primary/50 backdrop-blur-md">
-            <div className="flex items-center gap-3">
-              <Trophy className="w-6 h-6 text-primary" />
-              <div>
-                <div className="text-sm font-semibold text-muted-foreground">Currently Leading</div>
-                <div className="text-xl font-black text-foreground flex items-center gap-2">
-                  <span className="text-2xl">{leader.avatar}</span>
-                  {leader.name}
+        {leader && (
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="sticky top-4 z-10"
+          >
+            <Card className="p-4 bg-gradient-to-r from-primary/20 to-accent/20 border-2 border-primary/50 backdrop-blur-md">
+              <div className="flex items-center gap-3">
+                <Trophy className="w-6 h-6 text-primary" />
+                <div>
+                  <div className="text-sm font-semibold text-muted-foreground">Currently Leading (Points)</div>
+                  <div className="text-xl font-black text-foreground flex items-center gap-2">
+                    <span className="text-2xl">{leader.avatar}</span>
+                    {leader.name} - {leader.points || 0} pts
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        </motion.div>
+            </Card>
+          </motion.div>
+        )}
 
         <div className="h-64 rounded-xl overflow-hidden shadow-inner border-2 border-border">
-          <MapComponent runners={runners} />
+          <MapComponent key={`map-${runners.map(r => r.id).join('-')}-${runners.map(r => r.location?.lat + r.location?.lng).join('-')}`} runners={runners} />
         </div>
 
         {/* Runner Progress Bars */}
@@ -335,10 +371,10 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
               animate={{ x: 0, opacity: 1 }}
               transition={{ delay: index * 0.1 }}
             >
-              <Card className="p-4 border-2 hover:shadow-lg transition-shadow">
+              <Card className="p-4 border-2 hover:shadow-lg transition-shadow relative">
                 <div className="space-y-3">
                   {/* Runner Info */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between pr-10">
                     <div className="flex items-center gap-3">
                       <div
                         className="w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-md border-2 border-white/20"
@@ -360,15 +396,21 @@ export function RaceScreen({ initialRunners, startTime, onEndRace, playerId, roo
                     </div>
                   </div>
 
-                  {/* Progress Bar */}
+                  {/* Progress Bar - based on points */}
                   <div className="relative h-4 bg-muted rounded-full overflow-hidden">
                     <motion.div
                       className="absolute inset-y-0 left-0 rounded-full"
                       style={{ backgroundColor: runner.color }}
                       initial={{ width: 0 }}
-                      animate={{ width: `${Math.min((runner.distance / (leader.distance || 1)) * 100, 100)}%` }}
+                      animate={{ width: `${Math.min((runner.points / (leader?.points || 1)) * 100, 100)}%` }}
                       transition={{ duration: 0.5 }}
                     />
+                  </div>
+                  {/* Rank Badge */}
+                  <div className="absolute top-2 right-2">
+                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+                      #{index + 1}
+                    </div>
                   </div>
                 </div>
               </Card>

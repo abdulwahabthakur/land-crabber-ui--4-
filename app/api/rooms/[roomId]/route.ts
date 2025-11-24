@@ -33,6 +33,8 @@ export async function GET(
         players: room.players,
         isActive: room.isActive,
         startTime: room.startTime,
+        hostId: room.hostId || null,
+        duration: room.duration || null,
       },
     })
   } catch (error) {
@@ -132,14 +134,27 @@ export async function POST(
         existingPlayer.lastUpdate = Date.now()
       }
     } else if (action === 'start') {
+      // Only host can start the game
+      if (room.hostId && room.hostId !== playerId) {
+        return NextResponse.json(
+          { success: false, error: 'Only the host can start the game' },
+          { status: 403 }
+        )
+      }
+      
       if (room.players.length < 2) {
         return NextResponse.json(
           { success: false, error: 'Need at least 2 players' },
           { status: 400 }
         )
       }
+      
+      const { duration } = body // Duration in seconds (optional)
       room.isActive = true
       room.startTime = Date.now()
+      if (duration !== undefined) {
+        room.duration = duration // Store duration for auto-stop
+      }
     } else if (action === 'update') {
       const player = room.players.find((p: any) => p.id === playerId)
       if (player) {
@@ -181,6 +196,8 @@ export async function POST(
         players: updatedRoom.players,
         isActive: updatedRoom.isActive,
         startTime: updatedRoom.startTime,
+        hostId: updatedRoom.hostId || null,
+        duration: updatedRoom.duration || null,
       },
     })
   } catch (error) {

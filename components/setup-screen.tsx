@@ -21,14 +21,17 @@ type SetupScreenProps = {
   player: Player
   roomId: string | null
   onLeave?: () => void
+  onRaceStart?: () => void // Callback when race starts from room
 }
 
-export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenProps) {
+export function SetupScreen({ onBegin, player, roomId, onLeave, onRaceStart }: SetupScreenProps) {
   const [runners, setRunners] = useState<Runner[]>([
     { id: player.id, name: player.name, color: player.color, avatar: player.avatar },
   ])
   const [isLoadingRoom, setIsLoadingRoom] = useState(!!roomId)
   const [roomCode, setRoomCode] = useState<string | null>(null)
+  const [isHost, setIsHost] = useState(false)
+  const [raceDuration, setRaceDuration] = useState<number>(300) // Default 5 minutes in seconds
   const hasJoinedRef = useRef(false)
 
   // Load players from room if roomId exists and join if needed
@@ -91,6 +94,32 @@ export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenPro
           // Get room code if available
           if (data.room.code) {
             setRoomCode(data.room.code)
+          }
+          
+          // Check if current player is the host
+          setIsHost(data.room.hostId === playerId)
+          
+          // Set race duration if host has set it
+          if (data.room.duration) {
+            setRaceDuration(data.room.duration)
+          }
+          
+          // Check if race has started - if so, transition to race screen
+          if (data.room.isActive && data.room.startTime && data.room.players && data.room.players.length >= 2) {
+            // Race has started! Convert room players to runners and begin
+            const roomRunners = data.room.players.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              color: p.color,
+              avatar: p.avatar,
+            }))
+            // Call onRaceStart if provided, otherwise use onBegin
+            if (onRaceStart) {
+              onRaceStart()
+            } else {
+              onBegin(roomRunners)
+            }
+            return // Don't continue loading
           }
           
           // Check if current player is in the room
@@ -251,13 +280,21 @@ export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenPro
       return
     }
     
-    // If in a room, start the race for everyone
+    // If in a room, check if user is host
     if (roomId) {
+      if (!isHost) {
+        alert('Only the host can start the race')
+        return
+      }
+      
       try {
         const response = await fetch(`/api/rooms/${roomId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start' }),
+          body: JSON.stringify({ 
+            action: 'start',
+            duration: raceDuration, // Send duration to server
+          }),
         })
         const data = await response.json()
         if (data.success && data.room.players.length >= 2) {
@@ -270,12 +307,11 @@ export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenPro
           }))
           onBegin(roomRunners)
         } else {
-          alert('Need at least 2 players in the room to start')
+          alert(data.error || 'Need at least 2 players in the room to start')
         }
       } catch (error) {
         console.error('Error starting race:', error)
-        // Fallback to local race
-        onBegin(runners)
+        alert('Failed to start race. Please try again.')
       }
     } else {
       // Local race without room - just start with current runners
@@ -431,6 +467,61 @@ export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenPro
           </motion.div>
         )}
 
+        {/* Race Duration Input (Host Only) */}
+        {roomId && isHost && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.2 }}
+          >
+            <Card className="p-4 border-2">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-semibold text-foreground">
+                    Race Duration (Auto-Stop Timer)
+                  </label>
+                  <span className="text-sm text-muted-foreground">
+                    {Math.floor(raceDuration / 60)}:{(raceDuration % 60).toString().padStart(2, '0')}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min="60"
+                    max="3600"
+                    step="60"
+                    value={raceDuration}
+                    onChange={(e) => setRaceDuration(Math.max(60, Math.min(3600, parseInt(e.target.value) || 300)))}
+                    className="flex-1"
+                    placeholder="Duration in seconds"
+                  />
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRaceDuration(300)}
+                      className="text-xs"
+                    >
+                      5 min
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRaceDuration(600)}
+                      className="text-xs"
+                    >
+                      10 min
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The race will automatically end after this duration. Only you (the host) can set this.
+                </p>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+
         {/* Start Race Button */}
         <motion.div
           initial={{ y: 20, opacity: 0 }}
@@ -438,13 +529,20 @@ export function SetupScreen({ onBegin, player, roomId, onLeave }: SetupScreenPro
           transition={{ delay: 0.3 }}
           className="pt-4 space-y-3"
         >
+          {roomId && !isHost && (
+            <Card className="p-4 bg-muted/50 border-2 border-muted">
+              <p className="text-sm text-center text-muted-foreground">
+                ⏳ Waiting for host to start the race...
+              </p>
+            </Card>
+          )}
           <Button
             onClick={handleBegin}
-            disabled={!canStart}
+            disabled={!canStart || (roomId && !isHost)}
             size="lg"
             className="w-full text-2xl font-black py-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {"Let's Crab! 🦀"}
+            {roomId && !isHost ? "Waiting for Host..." : "Let's Crab! 🦀"}
           </Button>
           {roomId && onLeave && (
             <Button

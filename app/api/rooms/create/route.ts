@@ -85,9 +85,11 @@ export async function POST(request: NextRequest) {
         id: roomId,
         lat,
         lng,
+        hostId: playerId, // Track who created the room
         players: [],
         startTime: null,
         isActive: false,
+        duration: null, // Race duration in seconds (null = no auto-stop)
         createdAt: Date.now(),
       }
     }
@@ -111,6 +113,8 @@ export async function POST(request: NextRequest) {
           code: updatedRoom.code || code || null,
           players: updatedRoom.players,
           isActive: updatedRoom.isActive,
+          hostId: updatedRoom.hostId,
+          duration: updatedRoom.duration,
         },
       })
     }
@@ -176,6 +180,8 @@ export async function POST(request: NextRequest) {
         code: updatedRoom.code || code,
         players: updatedRoom.players,
         isActive: updatedRoom.isActive,
+        hostId: updatedRoom.hostId,
+        duration: updatedRoom.duration,
       },
     })
   } catch (error) {

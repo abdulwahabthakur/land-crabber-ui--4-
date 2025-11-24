@@ -41,6 +41,7 @@ export default function Page() {
   const [runners, setRunners] = useState<Runner[]>([])
   const [raceData, setRaceData] = useState<RaceData | null>(null)
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null)
+  const [raceDuration, setRaceDuration] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // Get player info based on IP on mount
@@ -208,7 +209,7 @@ export default function Page() {
     setScreen("setup")
   }
 
-  const handleBeginRace = (
+  const handleBeginRace = async (
     setupRunners: Omit<Runner, "distance" | "speed" | "time" | "points" | "location" | "pathHistory">[],
   ) => {
     const initialRunners = setupRunners.map((r) => ({
@@ -221,6 +222,22 @@ export default function Page() {
       pathHistory: [],
     }))
     setRunners(initialRunners)
+    
+    // If in a room, fetch the room data to get duration
+    let duration: number | null = null
+    if (currentRoomId) {
+      try {
+        const response = await fetch(`/api/rooms/${currentRoomId}`)
+        const data = await response.json()
+        if (data.success && data.room) {
+          duration = data.room.duration || null
+        }
+      } catch (error) {
+        console.error('Error fetching room duration:', error)
+      }
+    }
+    
+    setRaceDuration(duration)
     setRaceData({
       runners: initialRunners,
       startTime: Date.now(),
@@ -267,7 +284,27 @@ export default function Page() {
           onBegin={handleBeginRace} 
           player={player} 
           roomId={currentRoomId} 
-          onLeave={handleLeaveRoom} 
+          onLeave={handleLeaveRoom}
+          onRaceStart={async () => {
+            // When race starts from room, fetch room data and begin race
+            if (currentRoomId) {
+              try {
+                const response = await fetch(`/api/rooms/${currentRoomId}`)
+                const data = await response.json()
+                if (data.success && data.room && data.room.players) {
+                  const roomRunners = data.room.players.map((p: any) => ({
+                    id: p.id,
+                    name: p.name,
+                    color: p.color,
+                    avatar: p.avatar,
+                  }))
+                  await handleBeginRace(roomRunners)
+                }
+              } catch (error) {
+                console.error('Error starting race from room:', error)
+              }
+            }
+          }}
         />
       )}
       {screen === "race" && raceData && player && (
@@ -276,7 +313,8 @@ export default function Page() {
           startTime={raceData.startTime} 
           onEndRace={handleEndRace} 
           playerId={player.id} 
-          roomId={currentRoomId} 
+          roomId={currentRoomId}
+          duration={raceDuration}
         />
       )}
       {screen === "results" && player && (

@@ -122,9 +122,15 @@ const MapComponentInternal = ({ runners }: MapComponentProps) => {
 
           {runners.map((runner, index) => {
             const position = runner.location || { lat: 43.7735, lng: -79.5019 } // Fallback to center if undefined
+            // Use a key that includes location to force re-render when position changes
+            const positionKey = `${runner.id}-${position.lat}-${position.lng}`
 
             return (
-              <OverlayView key={runner.id} position={position} mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}>
+              <OverlayView 
+                key={positionKey} 
+                position={position} 
+                mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+              >
                 <RunnerMarker3D runner={runner} isLeader={index === 0} />
               </OverlayView>
             )

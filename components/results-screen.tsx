@@ -25,7 +25,13 @@ const HYPE_PHRASES = [
 
 export function ResultsScreen({ runners, onRestart, player }: ResultsScreenProps) {
   const [showConfetti, setShowConfetti] = useState(true)
-  const sortedRunners = [...runners].sort((a, b) => b.distance - a.distance)
+  // Sort by points first (primary), then by distance (secondary)
+  const sortedRunners = [...runners].sort((a, b) => {
+    if (b.points !== a.points) {
+      return b.points - a.points
+    }
+    return b.distance - a.distance
+  })
   const winner = sortedRunners[0]
   const hyePhrase = HYPE_PHRASES[Math.floor(Math.random() * HYPE_PHRASES.length)]
 
